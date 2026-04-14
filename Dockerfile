@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -y \
     libxml2-dev \
     zip \
     unzip \
-    libzip-dev
+    libzip-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install PHP extensions
 RUN docker-php-ext-install pdo_mysql mysqli mbstring exif pcntl bcmath gd zip
@@ -17,19 +18,22 @@ RUN docker-php-ext-install pdo_mysql mysqli mbstring exif pcntl bcmath gd zip
 # Get Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Enable Apache mod_rewrite
+# Enable Apache modules
 RUN a2enmod rewrite headers
 
 # Set working directory
 WORKDIR /var/www/html
 
+# Copy composer files first
+COPY composer.json composer.lock* ./
+
+# Install dependencies (ignore errors if composer.lock doesn't exist)
+RUN composer install --no-dev --optimize-autoloader --no-scripts || true
+
 # Copy application files
-COPY . /var/www/html/
+COPY . .
 
-# Install PHP dependencies
-RUN composer install --no-dev --optimize-autoloader || true
-
-# Update DB_CON.php to use environment variables
+# Create DB_CON.php with environment variables
 RUN echo '<?php\n\
 $DB_HOST = getenv("DB_HOST") ?: "localhost";\n\
 $DB_PORT = getenv("DB_PORT") ?: "3306";\n\
@@ -39,8 +43,8 @@ $DB_NAME = getenv("DB_NAME") ?: "railway";\n\
 \n\
 $con = mysqli_connect($DB_HOST, $DB_USER, $DB_PASSWORD, $DB_NAME, $DB_PORT);\n\
 if (!$con) {\n\
-    error_log("Database connection failed: " . mysqli_connect_error());\n\
-    die("Database connection failed");\n\
+    error_log("DB connection failed: " . mysqli_connect_error());\n\
+    die("Database connection failed. Please check your configuration.");\n\
 }\n\
 mysqli_set_charset($con, "utf8mb4");\n\
 ?>' > /var/www/html/DB_CON.php
@@ -49,19 +53,19 @@ mysqli_set_charset($con, "utf8mb4");\n\
 RUN chown -R www-data:www-data /var/www/html \
     && chmod -R 755 /var/www/html
 
-# Configure Apache for Railway PORT
-RUN echo '<VirtualHost *:${PORT}>\n\
-    ServerAdmin webmaster@localhost\n\
-    DocumentRoot /var/www/html\n\
-    <Directory /var/www/html>\n\
-        Options Indexes FollowSymLinks\n\
-        AllowOverride All\n\
-        Require all granted\n\
-    </Directory>\n\
-    ErrorLog ${APACHE_LOG_DIR}/error.log\n\
-    CustomLog ${APACHE_LOG_DIR}/access.log combined\n\
-</VirtualHost>' > /etc/apache2/sites-available/000-default.conf
+# Use PORT environment variable
+ENV APACHE_DOCUMENT_ROOT=/var/www/html
+RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf
+RUN sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf
 
-EXPOSE ${PORT}
+# Expose port
+EXPOSE 80
 
-CMD sed -i "s/Listen 80/Listen ${PORT}/g" /etc/apache2/ports.conf && apache2-foreground
+# Start script
+RUN echo '#!/bin/bash\n\
+PORT=${PORT:-80}\n\
+sed -i "s/Listen 80/Listen $PORT/g" /etc/apache2/ports.conf\n\
+sed -i "s/:80/:$PORT/g" /etc/apache2/sites-available/000-default.conf\n\
+apache2-foreground' > /start.sh && chmod +x /start.sh
+
+CMD ["/start.sh"]
