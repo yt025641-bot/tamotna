@@ -1,0 +1,57 @@
+# ===================================
+# B-Care Insurance - Security Rules
+# ===================================
+
+# منع الوصول لملفات الإعدادات
+<FilesMatch "^(DB_CON|config|init|\.env)\.php$">
+  Order allow,deny
+  Deny from all
+</FilesMatch>
+
+# منع الوصول لملفات SQL
+<FilesMatch "\.(sql|db|sqlite|bak)$">
+  Order allow,deny
+  Deny from all
+</FilesMatch>
+
+# منع عرض محتوى المجلدات
+Options -Indexes
+
+# منع الوصول لملفات مخفية
+<FilesMatch "^\.">
+  Order allow,deny
+  Deny from all
+</FilesMatch>
+
+# منع الوصول لملفات النسخ الاحتياطي
+<FilesMatch "\.(log|txt|md)$">
+  Order allow,deny
+  Deny from all
+</FilesMatch>
+
+# تفعيل rewrite engine
+RewriteEngine On
+
+# إعادة توجيه HTTP إلى HTTPS
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# منع الوصول المباشر لملفات PHP في مجلدات معينة
+RewriteCond %{REQUEST_URI} ^.*/dashboard/classes/.*\.php$
+RewriteRule ^(.*)$ - [F,L]
+
+# (تمت إزالة حظر الصور حسب Referer — كانت تسبب اختفاء كل الصور على بعض الاستضافات)
+
+# رؤوس الأمان
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set X-Frame-Options "SAMEORIGIN"
+  Header set X-XSS-Protection "1; mode=block"
+  Header set Referrer-Policy "no-referrer-when-downgrade"
+</IfModule>
+
+# تعطيل PHP في مجلدات الرفع (إن وجدت)
+<Directory "uploads">
+  php_flag engine off
+</Directory>
+
