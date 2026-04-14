@@ -1,6 +1,8 @@
 <?php
 /** MySQL hostname */
 define('DB_HOST', getenv('DB_HOST') ?: 'localhost');
+/** MySQL database port */
+define('DB_PORT', getenv('DB_PORT') ?: '3306');
 /** MySQL database username */
 define('DB_USER', getenv('DB_USER') ?: 'root');
 /** MySQL database password */
