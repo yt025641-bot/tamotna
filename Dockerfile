@@ -1,7 +1,8 @@
-FROM php:8.2-apache
+FROM php:8.2-fpm
 
-# Install system dependencies
+# Install dependencies
 RUN apt-get update && apt-get install -y \
+    nginx \
     git \
     curl \
     libpng-dev \
@@ -15,57 +16,60 @@ RUN apt-get update && apt-get install -y \
 # Install PHP extensions
 RUN docker-php-ext-install pdo_mysql mysqli mbstring exif pcntl bcmath gd zip
 
-# Get Composer
+# Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
-
-# Enable Apache modules
-RUN a2enmod rewrite headers
 
 # Set working directory
 WORKDIR /var/www/html
 
-# Copy composer files first
-COPY composer.json composer.lock* ./
-
-# Install dependencies (ignore errors if composer.lock doesn't exist)
+# Copy composer files
+COPY composer.json ./
 RUN composer install --no-dev --optimize-autoloader --no-scripts || true
 
-# Copy application files
+# Copy all files
 COPY . .
 
-# Create DB_CON.php with environment variables
+# Create DB_CON.php
 RUN echo '<?php\n\
 $DB_HOST = getenv("DB_HOST") ?: "localhost";\n\
 $DB_PORT = getenv("DB_PORT") ?: "3306";\n\
 $DB_USER = getenv("DB_USER") ?: "root";\n\
 $DB_PASSWORD = getenv("DB_PASSWORD") ?: "";\n\
 $DB_NAME = getenv("DB_NAME") ?: "railway";\n\
-\n\
 $con = mysqli_connect($DB_HOST, $DB_USER, $DB_PASSWORD, $DB_NAME, $DB_PORT);\n\
 if (!$con) {\n\
-    error_log("DB connection failed: " . mysqli_connect_error());\n\
-    die("Database connection failed. Please check your configuration.");\n\
+    error_log("DB Error: " . mysqli_connect_error());\n\
+    die("Database connection failed");\n\
 }\n\
 mysqli_set_charset($con, "utf8mb4");\n\
 ?>' > /var/www/html/DB_CON.php
 
+# Nginx config
+RUN echo 'server {\n\
+    listen $PORT;\n\
+    root /var/www/html;\n\
+    index index.php index.html;\n\
+    location / {\n\
+        try_files $uri $uri/ /index.php?$query_string;\n\
+    }\n\
+    location ~ \.php$ {\n\
+        fastcgi_pass 127.0.0.1:9000;\n\
+        fastcgi_index index.php;\n\
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n\
+        include fastcgi_params;\n\
+    }\n\
+}' > /etc/nginx/sites-available/default
+
 # Set permissions
-RUN chown -R www-data:www-data /var/www/html \
-    && chmod -R 755 /var/www/html
-
-# Use PORT environment variable
-ENV APACHE_DOCUMENT_ROOT=/var/www/html
-RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf
-RUN sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf
-
-# Expose port
-EXPOSE 80
+RUN chown -R www-data:www-data /var/www/html
 
 # Start script
 RUN echo '#!/bin/bash\n\
-PORT=${PORT:-80}\n\
-sed -i "s/Listen 80/Listen $PORT/g" /etc/apache2/ports.conf\n\
-sed -i "s/:80/:$PORT/g" /etc/apache2/sites-available/000-default.conf\n\
-apache2-foreground' > /start.sh && chmod +x /start.sh
+PORT=${PORT:-8080}\n\
+sed -i "s/\$PORT/$PORT/g" /etc/nginx/sites-available/default\n\
+php-fpm -D\n\
+nginx -g "daemon off;"' > /start.sh && chmod +x /start.sh
+
+EXPOSE 8080
 
 CMD ["/start.sh"]
